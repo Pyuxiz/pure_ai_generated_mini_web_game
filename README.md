@@ -15,6 +15,7 @@
 
 ## 📌 在线试玩（GitHub Pages）
 👉 https://pyuxiz.github.io/ai_help_generated_mini_web_game/
+你可以按'K'跳关
 
 ---
 
