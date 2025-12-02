@@ -157,6 +157,7 @@
             FIRE_RATE_MODIFIER: 0.85, 
         };
 
+        // 【修改点 1】: 初始升级花费调整
         const BASE_UPGRADE_COSTS = {
             DAMAGE: 500,
             RANGE: 300,
@@ -165,8 +166,8 @@
 
         // 【全局状态】
         let playerStats; 
-        let upgradeLevels; 
-        let currentUpgradeCosts; 
+        let upgradeLevels; // 【新增】: 存储升级等级
+        let currentUpgradeCosts; // 【新增】: 存储当前升级费用
 
         let gameState = 'MENU'; 
         let score = 0;
@@ -191,10 +192,6 @@
         const INACTIVITY_THRESHOLD_FRAMES = 60 * 10; 
 
         let bossType = 0; 
-        
-        // 【新增变量】: 触屏操作状态
-        let touchTarget = { x: canvas.width / 2, y: canvas.height / 2, active: false };
-        const TOUCH_MOVE_SPEED_MULTIPLIER = 1.2; // 触屏移动速度乘数，与键盘移动匹配
 
         // --- 辅助函数 ---
         function randomRange(min, max) { return Math.random() * (max - min) + min; }
@@ -327,12 +324,14 @@
         }
 
         function initializePlayerStats() {
+            // 初始化玩家属性
             playerStats = {
                 damage: CONFIG.projectileBaseDamage,
                 fireRateFrames: CONFIG.playerBaseFireRateFrames,
                 range: CONFIG.playerAttackRange,
             };
             
+            // 【修改点 1】: 初始化升级等级和当前费用
             upgradeLevels = {
                 DAMAGE: 0,
                 RANGE: 0,
@@ -346,6 +345,7 @@
             };
         }
 
+        // 【修改点 1】: 升级函数更新，处理等级和费用递增
         function applyUpgrade(type) {
             const cost = currentUpgradeCosts[type];
             if (money < cost) return false;
@@ -365,6 +365,7 @@
                 return false;
             }
             
+            // 更新下次升级费用 (乘 1.2 倍)
             currentUpgradeCosts[type] = Math.ceil(cost * 1.2); 
 
             updateHud(); 
@@ -417,20 +418,6 @@
                 this.fireTimer = 0;
             }
             update() {
-                // 【新增逻辑】: 触屏移动
-                if (touchTarget.active) {
-                    const dx = touchTarget.x - this.x;
-                    const dy = touchTarget.y - this.y;
-                    const dist = Math.hypot(dx, dy);
-
-                    if (dist > 5) { // 保持一定的死区，避免抖动
-                        const angle = Math.atan2(dy, dx);
-                        // 应用一个恒定的推力，速度与键盘输入相同
-                        this.velocity.x += Math.cos(angle) * TOUCH_MOVE_SPEED_MULTIPLIER;
-                        this.velocity.y += Math.sin(angle) * TOUCH_MOVE_SPEED_MULTIPLIER;
-                    }
-                }
-
                 this.x += this.velocity.x; this.y += this.velocity.y;
                 this.velocity.x *= this.friction; this.velocity.y *= this.friction;
                 if (this.x - this.radius < mapBounds.x) this.x = mapBounds.x + this.radius;
@@ -449,6 +436,7 @@
                 ctx.fill();
                 ctx.shadowBlur = 0;
                 
+                // 绘制自动吸取范围 (攻击范围的 1/3)
                 const collectionRadius = playerStats.range / 3;
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, collectionRadius, 0, Math.PI * 2);
@@ -456,6 +444,7 @@
                 ctx.lineWidth = 2;
                 ctx.stroke();
 
+                // 绘制攻击范围
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, playerStats.range, 0, Math.PI * 2);
                 ctx.strokeStyle = 'rgba(0, 255, 255, 0.2)'; 
@@ -746,7 +735,7 @@
 
             projectiles = [];
             particles = [];
-            moneyDrops = []; 
+            moneyDrops = []; // 保证金钱掉落物清空
             
             player = new Player(); 
             levelTimer = 0;
@@ -826,6 +815,7 @@
             gameState = 'LEVEL_COMPLETE';
             cancelAnimationFrame(animationId);
             
+            // 【修改点 2】: 关卡通关后，结算剩余金钱
             collectRemainingMoney();
 
             rewardLevelEl.innerText = level;
@@ -833,17 +823,21 @@
             rewardScreen.classList.remove('hidden');
         }
 
+        // 【新增函数】: 结算剩余金钱
         function collectRemainingMoney() {
             let collectedValue = 0;
             moneyDrops.forEach(drop => {
                 collectedValue += drop.value;
             });
             
+            // 乘以 0.5 倍
             const finalMoneyGain = Math.floor(collectedValue * 0.5);
             money += finalMoneyGain;
             
+            // 清空掉落物 (已结算)
             moneyDrops = [];
             
+            // 视觉反馈 (可选，可以简单地在控制台输出或闪烁 HUD)
             console.log(`关卡结算：收集到 ${collectedValue}，实际获得 ${finalMoneyGain} (0.5倍)`);
             updateHud();
         }
@@ -867,7 +861,7 @@
                 if (side === 0) { ex = randomRange(0, canvas.width); ey = 0 - buffer; } 
                 else if (side === 1) { ex = canvas.width + buffer; ey = randomRange(0, canvas.height); } 
                 else if (side === 2) { ex = randomRange(0, canvas.width); ey = canvas.height + buffer; } 
-                else { ex = 0 - buffer; by = randomRange(0, canvas.height); } 
+                else { ex = 0 - buffer; ey = randomRange(0, canvas.height); } 
 
                 if (type === 'triangle') enemies.push(new EnemyTriangle(ex, ey));
                 else if (type === 'square') enemies.push(new EnemySquare(ex, ey));
@@ -952,10 +946,8 @@
                 }
             }
             
-            // 检查移动状态：键盘或触摸目标是否激活
-            const isMoving = keys.w || keys.a || keys.s || keys.d || (touchTarget.active && (Math.hypot(touchTarget.x - player.x, touchTarget.y - player.y) > 5));
-
-            if (!isMoving) { 
+            const playerSpeedSq = player.velocity.x ** 2 + player.velocity.y ** 2;
+            if (playerSpeedSq < 0.1 && (keys.w || keys.a || keys.s || keys.d) === false) { 
                 inactivityTimer++; 
             } else {
                 inactivityTimer = 0; 
@@ -1059,10 +1051,8 @@
 
         window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
-        // 键盘输入处理间隔
         setInterval(() => {
             if (gameState !== 'PLAYING') return;
-            // 键盘输入以恒定速度增加加速度
             if (keys.w) player.velocity.y -= 1.2;
             if (keys.s) player.velocity.y += 1.2;
             if (keys.a) player.velocity.x -= 1.2;
@@ -1076,53 +1066,6 @@
                  mapBounds = { x: 0, y: 0, w: canvas.width, h: canvas.height };
             }
         });
-        
-        // --- 【新增】触屏输入处理 ---
-
-        canvas.addEventListener('touchstart', handleTouchStart, false);
-        canvas.addEventListener('touchmove', handleTouchMove, false);
-        canvas.addEventListener('touchend', handleTouchEnd, false);
-
-        function getTouchPos(e) {
-            const rect = canvas.getBoundingClientRect();
-            // 只关注第一个触摸点
-            return {
-                x: e.touches[0].clientX - rect.left,
-                y: e.touches[0].clientY - rect.top
-            };
-        }
-
-        function handleTouchStart(e) {
-            e.preventDefault(); // 阻止默认的缩放/滚动行为
-            if (gameState !== 'PLAYING') return;
-
-            const pos = getTouchPos(e);
-            touchTarget.x = pos.x;
-            touchTarget.y = pos.y;
-            touchTarget.active = true;
-        }
-
-        function handleTouchMove(e) {
-            e.preventDefault();
-            if (gameState !== 'PLAYING' || !touchTarget.active) return;
-            
-            const pos = getTouchPos(e);
-            touchTarget.x = pos.x;
-            touchTarget.y = pos.y;
-        }
-
-        function handleTouchEnd(e) {
-            e.preventDefault();
-            // 如果所有触摸点都消失了，停止移动
-            if (e.touches.length === 0) {
-                touchTarget.active = false;
-            } else if (gameState === 'PLAYING') {
-                // 如果还有其他触摸点，将目标更新到新的第一个触摸点位置
-                const pos = getTouchPos(e);
-                touchTarget.x = pos.x;
-                touchTarget.y = pos.y;
-            }
-        }
         
         // --- UI 事件绑定 (确保在 DOM 加载后执行) ---
         window.addEventListener('load', () => {
