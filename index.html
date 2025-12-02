@@ -117,962 +117,1045 @@
 
     <script>
         const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        
-        // --- DOM 元素引用 ---
-        const [scoreEl, levelEl, timeEl, moneyEl] = ['score-el', 'level-el', 'time-el', 'money-el'].map(id => document.getElementById(id));
-        const startScreen = document.getElementById('start-screen');
-        const rewardScreen = document.getElementById('reward-screen');
-        const gameOverScreen = document.getElementById('game-over-screen');
-        const [rewardLevelEl, rewardMoneyEl, nextLevelDisplayEl] = ['reward-level', 'reward-money', 'next-level-display'].map(id => document.getElementById(id));
-        const levelBar = document.getElementById('level-bar');
+const ctx = canvas.getContext('2d');
 
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+// --- DOM 元素引用 ---
+const [scoreEl, levelEl, timeEl, moneyEl] = ['score-el', 'level-el', 'time-el', 'money-el'].map(id => document.getElementById(id));
+const startScreen = document.getElementById('start-screen');
+const rewardScreen = document.getElementById('reward-screen');
+const gameOverScreen = document.getElementById('game-over-screen');
+const [rewardLevelEl, rewardMoneyEl, nextLevelDisplayEl] = ['reward-level', 'reward-money', 'next-level-display'].map(id => document.getElementById(id));
+const levelBar = document.getElementById('level-bar');
 
-        // --- 游戏配置与核心平衡数据 ---
-        const CONFIG = {
-            baseMapShrink: 50,       
-            normalDuration: 45,    
-            boss2Duration: 120,    
-            boss1Duration: 0,      
-            
-            playerBaseFireRateFrames: 12, 
-            projectileBaseDamage: 10,  
-            playerAttackRange: 400,    
-            
-            get playerBaseDPS() { 
-                return (60 / this.playerBaseFireRateFrames) * this.projectileBaseDamage;
-            },
-            enemyWeights: { 'triangle': 4, 'tank': 7, 'square': 10 },
-            difficultyBaseFactor: 1.1,
-            difficultyIncPerLevel: 0.1,
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-            squareBaseHP: 40, 
-        };
+// --- 游戏配置与核心平衡数据 ---
+const CONFIG = {
+    baseMapShrink: 50,
+    normalDuration: 45,
+    boss2Duration: 120,
+    boss1Duration: 0,
 
-        const UPGRADE_FACTORS = {
-            DAMAGE: 1.25, 
-            RANGE: 100,    
-            FIRE_RATE_MODIFIER: 0.85, 
-        };
+    playerBaseFireRateFrames: 12,
+    projectileBaseDamage: 10,
+    playerAttackRange: 400,
 
-        // 【修改点 1】: 初始升级花费调整
-        const BASE_UPGRADE_COSTS = {
-            DAMAGE: 500,
-            RANGE: 300,
-            FIRE_RATE: 400
-        };
+    get playerBaseDPS() {
+        return (60 / this.playerBaseFireRateFrames) * this.projectileBaseDamage;
+    },
+    enemyWeights: { 'triangle': 4, 'tank': 7, 'square': 10 },
+    difficultyBaseFactor: 1.1,
+    difficultyIncPerLevel: 0.1,
 
-        // 【全局状态】
-        let playerStats; 
-        let upgradeLevels; // 【新增】: 存储升级等级
-        let currentUpgradeCosts; // 【新增】: 存储当前升级费用
+    squareBaseHP: 40,
+};
 
-        let gameState = 'MENU'; 
-        let score = 0;
-        let money = 0; 
-        let level = 1;
-        let levelTimer = 0;
-        let currentLevelDuration;
-        
-        let mapBounds = { x: 0, y: 0, w: canvas.width, h: canvas.height };
-        let animationId;
-        
-        let player;
-        let projectiles = [];
-        let enemies = [];
-        let particles = [];
-        let specialElements = [];
-        let moneyDrops = []; 
-        let frameCount = 0;
-        let spawnFrames = 0; 
-        
-        let inactivityTimer = 0; 
-        const INACTIVITY_THRESHOLD_FRAMES = 60 * 10; 
+const UPGRADE_FACTORS = {
+    DAMAGE: 1.25,
+    RANGE: 100,
+    FIRE_RATE_MODIFIER: 0.85,
+};
 
-        let bossType = 0; 
+// 【修改点 1】: 初始升级花费调整
+const BASE_UPGRADE_COSTS = {
+    DAMAGE: 500,
+    RANGE: 300,
+    FIRE_RATE: 400
+};
 
-        // --- 辅助函数 ---
-        function randomRange(min, max) { return Math.random() * (max - min) + min; }
-        
-        function isBossLevel(lvl) {
-            return lvl > 0 && lvl % 5 === 0;
+// 【全局状态】
+let playerStats;
+let upgradeLevels; // 【新增】: 存储升级等级
+let currentUpgradeCosts; // 【新增】: 存储当前升级费用
+
+let gameState = 'MENU';
+let score = 0;
+let money = 0;
+let level = 1;
+let levelTimer = 0;
+let currentLevelDuration;
+
+let mapBounds = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+let animationId;
+
+let player;
+let projectiles = [];
+let enemies = [];
+let particles = [];
+let specialElements = [];
+let moneyDrops = [];
+let frameCount = 0;
+let spawnFrames = 0;
+
+let inactivityTimer = 0;
+const INACTIVITY_THRESHOLD_FRAMES = 60 * 10;
+
+let bossType = 0;
+
+// 【新增】: 触屏控制状态
+let touchTarget = null;
+const MAX_TOUCH_SPEED = 5; // 匹配键盘控制时的最大速度增量
+
+// --- 辅助函数 ---
+function randomRange(min, max) { return Math.random() * (max - min) + min; }
+
+function isBossLevel(lvl) {
+    return lvl > 0 && lvl % 5 === 0;
+}
+
+// --- 粒子类 (用于爆炸效果) ---
+class Particle {
+    constructor(x, y, color, radius) {
+        this.x = x; this.y = y; this.radius = radius;
+        this.color = color;
+        this.vx = (Math.random() - 0.5) * 4;
+        this.vy = (Math.random() - 0.5) * 4;
+        this.alpha = 1;
+        this.friction = 0.98;
+    }
+    update() {
+        this.x += this.vx; this.y += this.vy;
+        this.vx *= this.friction; this.vy *= this.friction;
+        this.alpha -= 0.02;
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+// --- 绿色五角星类 (特殊道具) ---
+class SpecialStar {
+    constructor(x, y) {
+        this.x = x; this.y = y;
+        this.radius = 30;
+        this.color = '#00ff7f';
+        this.markedForDeletion = false;
+        this.angle = 0;
+        this.spawnFrame = frameCount;
+    }
+    update() {
+        this.angle += 0.05;
+        this.draw();
+        this.drawInactivityTimer();
+    }
+
+    drawInactivityTimer() {
+        const elapsedFrames = frameCount - this.spawnFrame;
+
+        const progress = elapsedFrames / INACTIVITY_THRESHOLD_FRAMES;
+        const radius = this.radius + 10;
+        const startAngle = -Math.PI / 2;
+        const endAngle = startAngle + (Math.PI * 2) * (1 - progress);
+
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, radius, startAngle, endAngle, false);
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+
+        if (elapsedFrames >= INACTIVITY_THRESHOLD_FRAMES) {
+            shrinkMap();
+            this.markedForDeletion = true;
+            inactivityTimer = 0;
         }
+    }
 
-        // --- 粒子类 (用于爆炸效果) ---
-        class Particle {
-            constructor(x, y, color, radius) {
-                this.x = x; this.y = y; this.radius = radius;
-                this.color = color;
-                this.vx = (Math.random() - 0.5) * 4;
-                this.vy = (Math.random() - 0.5) * 4;
-                this.alpha = 1;
-                this.friction = 0.98;
-            }
-            update() {
-                this.x += this.vx; this.y += this.vy;
-                this.vx *= this.friction; this.vy *= this.friction;
-                this.alpha -= 0.02;
-                ctx.save();
-                ctx.globalAlpha = this.alpha;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.fill();
-                ctx.restore();
-            }
-        }
-        
-        // --- 绿色五角星类 (特殊道具) ---
-        class SpecialStar {
-            constructor(x, y) {
-                this.x = x; this.y = y;
-                this.radius = 30; 
-                this.color = '#00ff7f'; 
-                this.markedForDeletion = false;
-                this.angle = 0;
-                this.spawnFrame = frameCount; 
-            }
-            update() {
-                this.angle += 0.05;
-                this.draw();
-                this.drawInactivityTimer();
-            }
-            
-            drawInactivityTimer() {
-                const elapsedFrames = frameCount - this.spawnFrame;
-                
-                const progress = elapsedFrames / INACTIVITY_THRESHOLD_FRAMES;
-                const radius = this.radius + 10;
-                const startAngle = -Math.PI / 2;
-                const endAngle = startAngle + (Math.PI * 2) * (1 - progress);
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
 
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, radius, 0, Math.PI * 2);
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-                ctx.lineWidth = 5;
-                ctx.stroke();
+        ctx.fillStyle = this.color;
 
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, radius, startAngle, endAngle, false);
-                ctx.strokeStyle = '#ff0000'; 
-                ctx.lineWidth = 5;
-                ctx.stroke();
+        ctx.beginPath();
+        const outerRadius = this.radius;
+        const innerRadius = this.radius * 0.4;
+        const numPoints = 5;
 
-                if (elapsedFrames >= INACTIVITY_THRESHOLD_FRAMES) {
-                    shrinkMap();
-                    this.markedForDeletion = true;
-                    inactivityTimer = 0; 
-                }
-            }
+        for (let i = 0; i < numPoints * 2; i++) {
+            const currentRadius = i % 2 === 0 ? outerRadius : innerRadius;
+            const angle = (Math.PI / numPoints) * i - (Math.PI / 2);
+            const px = currentRadius * Math.cos(angle);
+            const py = currentRadius * Math.sin(angle);
 
-            draw() {
-                ctx.save();
-                ctx.translate(this.x, this.y);
-                ctx.rotate(this.angle);
-
-                ctx.fillStyle = this.color;
-                
-                ctx.beginPath();
-                const outerRadius = this.radius;
-                const innerRadius = this.radius * 0.4;
-                const numPoints = 5;
-
-                for (let i = 0; i < numPoints * 2; i++) {
-                    const currentRadius = i % 2 === 0 ? outerRadius : innerRadius;
-                    const angle = (Math.PI / numPoints) * i - (Math.PI / 2); 
-                    const px = currentRadius * Math.cos(angle);
-                    const py = currentRadius * Math.sin(angle);
-
-                    if (i === 0) {
-                        ctx.moveTo(px, py);
-                    } else {
-                        ctx.lineTo(px, py);
-                    }
-                }
-                ctx.closePath();
-                
-                ctx.shadowBlur = 10; ctx.shadowColor = this.color;
-                ctx.fill();
-                ctx.shadowBlur = 0;
-                ctx.restore();
-            }
-        }
-
-        // --- 金钱掉落类 ---
-        class MoneyDrop {
-            constructor(x, y, value) {
-                this.x = x; this.y = y; this.value = value;
-                this.radius = Math.max(5, Math.min(15, value / 50)); 
-                this.color = '#ffd700'; 
-                this.markedForDeletion = false;
-            }
-            update() {
-                this.draw();
-            }
-            draw() {
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.fill();
-            }
-        }
-
-        function createExplosion(x, y, color, count) {
-            for(let i=0; i<count; i++) particles.push(new Particle(x, y, color, 5));
-        }
-
-        function initializePlayerStats() {
-            // 初始化玩家属性
-            playerStats = {
-                damage: CONFIG.projectileBaseDamage,
-                fireRateFrames: CONFIG.playerBaseFireRateFrames,
-                range: CONFIG.playerAttackRange,
-            };
-            
-            // 【修改点 1】: 初始化升级等级和当前费用
-            upgradeLevels = {
-                DAMAGE: 0,
-                RANGE: 0,
-                FIRE_RATE: 0
-            };
-
-            currentUpgradeCosts = {
-                DAMAGE: BASE_UPGRADE_COSTS.DAMAGE,
-                RANGE: BASE_UPGRADE_COSTS.RANGE,
-                FIRE_RATE: BASE_UPGRADE_COSTS.FIRE_RATE
-            };
-        }
-
-        // 【修改点 1】: 升级函数更新，处理等级和费用递增
-        function applyUpgrade(type) {
-            const cost = currentUpgradeCosts[type];
-            if (money < cost) return false;
-            
-            money -= cost;
-            
-            if (type === 'DAMAGE') {
-                playerStats.damage = Math.ceil(playerStats.damage * UPGRADE_FACTORS.DAMAGE);
-                upgradeLevels.DAMAGE++;
-            } else if (type === 'RANGE') {
-                playerStats.range += UPGRADE_FACTORS.RANGE;
-                upgradeLevels.RANGE++;
-            } else if (type === 'FIRE_RATE') {
-                playerStats.fireRateFrames = Math.max(3, Math.floor(playerStats.fireRateFrames * UPGRADE_FACTORS.FIRE_RATE_MODIFIER));
-                upgradeLevels.FIRE_RATE++;
+            if (i === 0) {
+                ctx.moveTo(px, py);
             } else {
-                return false;
-            }
-            
-            // 更新下次升级费用 (乘 1.2 倍)
-            currentUpgradeCosts[type] = Math.ceil(cost * 1.2); 
-
-            updateHud(); 
-            generateRewardOptions(); 
-            return true;
-        }
-
-        function calculateSpawnRate() {
-            const weights = CONFIG.enemyWeights;
-            const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
-            const H_triangle = 20;
-            const H_tank = 150;
-            const H_square = 40 * 4; 
-            const weightedHP = ((weights.triangle * H_triangle) + (weights.tank * H_tank) + (weights.square * H_square));
-            const H_avg = weightedHP / totalWeight; 
-            const difficultyFactor = CONFIG.difficultyBaseFactor + (level - 1) * CONFIG.difficultyIncPerLevel;
-            const F_target = (CONFIG.playerBaseDPS * difficultyFactor) / H_avg;
-            const frameInterval = Math.floor(60 / F_target);
-            spawnFrames = Math.max(10, frameInterval);
-        }
-
-        // --- 核心类定义 (Player, Enemy等) ---
-
-        class Projectile {
-            constructor(x, y, vx, vy) {
-                this.x = x; this.y = y; this.vx = vx; this.vy = vy;
-                this.radius = 4;
-                this.damage = playerStats.damage; 
-                this.markedForDeletion = false; 
-                this.startX = x; this.startY = y;
-            }
-            update() {
-                this.x += this.vx; this.y += this.vy;
-                const distanceTraveled = Math.hypot(this.x - this.startX, this.y - this.startY);
-                if (distanceTraveled > playerStats.range) { this.markedForDeletion = true; }
-                if (this.x < -100 || this.x > canvas.width + 100 || this.y < -100 || this.y > canvas.height + 100) { this.markedForDeletion = true; }
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = '#ff0';
-                ctx.fill();
+                ctx.lineTo(px, py);
             }
         }
-        
-        class Player {
-             constructor() {
-                this.x = canvas.width / 2; this.y = canvas.height / 2;
-                this.radius = 12; this.color = '#fff';
-                this.velocity = { x: 0, y: 0 };
-                this.speed = 0.8; this.friction = 0.9;
-                this.fireTimer = 0;
-            }
-            update() {
-                this.x += this.velocity.x; this.y += this.velocity.y;
-                this.velocity.x *= this.friction; this.velocity.y *= this.friction;
-                if (this.x - this.radius < mapBounds.x) this.x = mapBounds.x + this.radius;
-                if (this.x + this.radius > mapBounds.x + mapBounds.w) this.x = mapBounds.x + mapBounds.w - this.radius;
-                if (this.y - this.radius < mapBounds.y) this.y = mapBounds.y + this.radius;
-                if (this.y + this.radius > mapBounds.y + mapBounds.h) this.y = mapBounds.y + mapBounds.h - this.radius;
+        ctx.closePath();
 
-                this.fireTimer++; this.autoShoot();
-                this.draw();
-            }
-            draw() {
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.shadowBlur = 15; ctx.shadowColor = 'white';
-                ctx.fill();
-                ctx.shadowBlur = 0;
-                
-                // 绘制自动吸取范围 (攻击范围的 1/3)
-                const collectionRadius = playerStats.range / 3;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, collectionRadius, 0, Math.PI * 2);
-                ctx.strokeStyle = 'rgba(255, 200, 0, 0.15)'; 
-                ctx.lineWidth = 2;
-                ctx.stroke();
+        ctx.shadowBlur = 10; ctx.shadowColor = this.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+}
 
-                // 绘制攻击范围
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, playerStats.range, 0, Math.PI * 2);
-                ctx.strokeStyle = 'rgba(0, 255, 255, 0.2)'; 
-                ctx.lineWidth = 3; 
-                ctx.stroke();
-            }
-            autoShoot() {
-                if (this.fireTimer < playerStats.fireRateFrames) return;
-                
-                let nearest = null;
-                let minDst = Infinity;
-                const maxRange = playerStats.range; 
+// --- 金钱掉落类 ---
+class MoneyDrop {
+    constructor(x, y, value) {
+        this.x = x; this.y = y; this.value = value;
+        this.radius = Math.max(5, Math.min(15, value / 50));
+        this.color = '#ffd700';
+        this.markedForDeletion = false;
+    }
+    update() {
+        this.draw();
+    }
+    draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.fill();
+    }
+}
 
-                enemies.forEach(e => {
-                    if (e.type === 'boss2') return; 
+function createExplosion(x, y, color, count) {
+    for(let i=0; i<count; i++) particles.push(new Particle(x, y, color, 5));
+}
 
-                    const d = Math.hypot(e.x - this.x, e.y - this.y);
-                    if (d < minDst && d <= maxRange) { 
-                        minDst = d; 
-                        nearest = e; 
-                    }
-                });
+function initializePlayerStats() {
+    // 初始化玩家属性
+    playerStats = {
+        damage: CONFIG.projectileBaseDamage,
+        fireRateFrames: CONFIG.playerBaseFireRateFrames,
+        range: CONFIG.playerAttackRange,
+    };
 
-                if (nearest) {
-                    const angle = Math.atan2(nearest.y - this.y, nearest.x - this.x);
-                    projectiles.push(new Projectile(this.x, this.y, Math.cos(angle) * 12, Math.sin(angle) * 12));
-                    this.fireTimer = 0;
+    // 【修改点 1】: 初始化升级等级和当前费用
+    upgradeLevels = {
+        DAMAGE: 0,
+        RANGE: 0,
+        FIRE_RATE: 0
+    };
+
+    currentUpgradeCosts = {
+        DAMAGE: BASE_UPGRADE_COSTS.DAMAGE,
+        RANGE: BASE_UPGRADE_COSTS.RANGE,
+        FIRE_RATE: BASE_UPGRADE_COSTS.FIRE_RATE
+    };
+}
+
+// 【修改点 1】: 升级函数更新，处理等级和费用递增
+function applyUpgrade(type) {
+    const cost = currentUpgradeCosts[type];
+    if (money < cost) return false;
+
+    money -= cost;
+
+    if (type === 'DAMAGE') {
+        playerStats.damage = Math.ceil(playerStats.damage * UPGRADE_FACTORS.DAMAGE);
+        upgradeLevels.DAMAGE++;
+    } else if (type === 'RANGE') {
+        playerStats.range += UPGRADE_FACTORS.RANGE;
+        upgradeLevels.RANGE++;
+    } else if (type === 'FIRE_RATE') {
+        playerStats.fireRateFrames = Math.max(3, Math.floor(playerStats.fireRateFrames * UPGRADE_FACTORS.FIRE_RATE_MODIFIER));
+        upgradeLevels.FIRE_RATE++;
+    } else {
+        return false;
+    }
+
+    // 更新下次升级费用 (乘 1.2 倍)
+    currentUpgradeCosts[type] = Math.ceil(cost * 1.2);
+
+    updateHud();
+    generateRewardOptions();
+    return true;
+}
+
+function calculateSpawnRate() {
+    const weights = CONFIG.enemyWeights;
+    const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
+    const H_triangle = 20;
+    const H_tank = 150;
+    const H_square = 40 * 4;
+    const weightedHP = ((weights.triangle * H_triangle) + (weights.tank * H_tank) + (weights.square * H_square));
+    const H_avg = weightedHP / totalWeight;
+    const difficultyFactor = CONFIG.difficultyBaseFactor + (level - 1) * CONFIG.difficultyIncPerLevel;
+    const F_target = (CONFIG.playerBaseDPS * difficultyFactor) / H_avg;
+    const frameInterval = Math.floor(60 / F_target);
+    spawnFrames = Math.max(10, frameInterval);
+}
+
+// --- 核心类定义 (Player, Enemy等) ---
+
+class Projectile {
+    constructor(x, y, vx, vy) {
+        this.x = x; this.y = y; this.vx = vx; this.vy = vy;
+        this.radius = 4;
+        this.damage = playerStats.damage;
+        this.markedForDeletion = false;
+        this.startX = x; this.startY = y;
+    }
+    update() {
+        this.x += this.vx; this.y += this.vy;
+        const distanceTraveled = Math.hypot(this.x - this.startX, this.y - this.startY);
+        if (distanceTraveled > playerStats.range) { this.markedForDeletion = true; }
+        if (this.x < -100 || this.x > canvas.width + 100 || this.y < -100 || this.y > canvas.height + 100) { this.markedForDeletion = true; }
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff0';
+        ctx.fill();
+    }
+}
+
+class Player {
+     constructor() {
+        this.x = canvas.width / 2; this.y = canvas.height / 2;
+        this.radius = 12; this.color = '#fff';
+        this.velocity = { x: 0, y: 0 };
+        this.speed = 0.8; this.friction = 0.9;
+        this.fireTimer = 0;
+    }
+    update() {
+        // --- 【修改点 3】: 新的移动逻辑，处理键盘和触屏输入 ---
+        if (touchTarget) {
+            const dx = touchTarget.x - this.x;
+            const dy = touchTarget.y - this.y;
+            const dist = Math.hypot(dx, dy);
+
+            // 当距离较小时，减少摩擦力，以更快停下
+            const frictionToUse = dist < 20 ? 0.85 : this.friction;
+
+            if (dist > 5) { // 保持一定的距离，避免抖动
+                // 计算单位向量
+                const angle = Math.atan2(dy, dx);
+                // 施加力，最大速度为 MAX_TOUCH_SPEED
+                this.velocity.x += Math.cos(angle) * this.speed;
+                this.velocity.y += Math.sin(angle) * this.speed;
+
+                // 限制最大速度
+                const currentSpeed = Math.hypot(this.velocity.x, this.velocity.y);
+                if (currentSpeed > MAX_TOUCH_SPEED * 2) { // 乘以 2 是为了匹配原逻辑中setInterval的多次叠加效果
+                    this.velocity.x = (this.velocity.x / currentSpeed) * MAX_TOUCH_SPEED * 2;
+                    this.velocity.y = (this.velocity.y / currentSpeed) * MAX_TOUCH_SPEED * 2;
                 }
             }
-        }
-        
-        class Enemy {
-            constructor(x, y, type) {
-                this.x = x; this.y = y;
-                this.vx = 0; this.vy = 0;
-                this.markedForDeletion = false;
-                this.radius = 10; this.hp = 10; this.maxHp = 10;
-                this.speed = 1; this.color = '#fff'; this.type = type || 'base';
-            }
-            takeDamage(amt) {
-                this.hp -= amt;
-                if (this.hp <= 0) {
-                    this.markedForDeletion = true;
-                    score += this.maxHp * 2;
-                    scoreEl.innerText = score;
-                    
-                    moneyDrops.push(new MoneyDrop(this.x, this.y, Math.round(this.maxHp / 2)));
-                    
-                    createExplosion(this.x, this.y, this.color, 8);
-                    
-                    if (this.type === 'boss1') levelComplete();
-                }
-            }
-            drawHealthBar() {
-                if (this.hp < this.maxHp && this.type !== 'boss2') {
-                    const pct = this.hp / this.maxHp;
-                    const barWidth = Math.min(this.radius * 3, 50);
-                    ctx.fillStyle = 'red';
-                    ctx.fillRect(this.x - barWidth/2, this.y - this.radius - 8, barWidth, 4);
-                    ctx.fillStyle = '#0f0';
-                    ctx.fillRect(this.x - barWidth/2, this.y - this.radius - 8, barWidth * pct, 4);
-                }
-            }
-            update() {
-                if(this.type === 'boss2') return this.draw(); 
-                const angle = Math.atan2(player.y - this.y, player.x - this.x);
-                this.vx = Math.cos(angle) * this.speed;
-                this.vy = Math.sin(angle) * this.speed;
-                this.x += this.vx;
-                this.y += this.vy;
-                this.draw();
-                this.drawHealthBar();
-            }
-            draw() { /* 子类实现 */ }
+            this.velocity.x *= frictionToUse;
+            this.velocity.y *= frictionToUse;
+        } else {
+             // 键盘输入 (保留，但移动逻辑放到animate循环里)
+             this.velocity.x *= this.friction;
+             this.velocity.y *= this.friction;
         }
 
-        class EnemyTriangle extends Enemy { 
-            constructor(x, y) {
-                super(x, y, 'triangle');
-                this.radius = 12; this.speed = 3.5; 
-                this.hp = 20; this.maxHp = 20;
-                this.color = '#ffd700'; this.angle = 0;
+        this.x += this.velocity.x; this.y += this.velocity.y;
+
+        // 边界检测
+        if (this.x - this.radius < mapBounds.x) this.x = mapBounds.x + this.radius;
+        if (this.x + this.radius > mapBounds.x + mapBounds.w) this.x = mapBounds.x + mapBounds.w - this.radius;
+        if (this.y - this.radius < mapBounds.y) this.y = mapBounds.y + this.radius;
+        if (this.y + this.radius > mapBounds.y + mapBounds.h) this.y = mapBounds.y + mapBounds.h - this.radius;
+
+        this.fireTimer++; this.autoShoot();
+        this.draw();
+    }
+    draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 15; ctx.shadowColor = 'white';
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // 绘制自动吸取范围 (攻击范围的 1/3)
+        const collectionRadius = playerStats.range / 3;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, collectionRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255, 200, 0, 0.15)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 绘制攻击范围
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, playerStats.range, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(0, 255, 255, 0.2)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    }
+    autoShoot() {
+        if (this.fireTimer < playerStats.fireRateFrames) return;
+
+        let nearest = null;
+        let minDst = Infinity;
+        const maxRange = playerStats.range;
+
+        enemies.forEach(e => {
+            if (e.type === 'boss2') return;
+
+            const d = Math.hypot(e.x - this.x, e.y - this.y);
+            if (d < minDst && d <= maxRange) {
+                minDst = d;
+                nearest = e;
             }
-            update() { this.angle += 0.1; super.update(); }
-            draw() {
-                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
-                ctx.beginPath();
-                ctx.moveTo(12, 0); ctx.lineTo(-9, 9); ctx.lineTo(-9, -9);
-                ctx.fillStyle = this.color; ctx.fill();
-                ctx.restore();
-            }
+        });
+
+        if (nearest) {
+            const angle = Math.atan2(nearest.y - this.y, nearest.x - this.x);
+            projectiles.push(new Projectile(this.x, this.y, Math.cos(angle) * 12, Math.sin(angle) * 12));
+            this.fireTimer = 0;
         }
+    }
+}
 
-        class EnemyTank extends Enemy {
-            constructor(x, y) {
-                super(x, y, 'tank');
-                this.radius = 35; this.speed = 0.8;
-                this.hp = 150; this.maxHp = 150;
-                this.color = '#ff3333';
-            }
-            draw() {
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
-                ctx.fillStyle = this.color;
-                ctx.shadowBlur = 10; ctx.shadowColor = 'red';
-                ctx.fill();
-                ctx.shadowBlur = 0;
-            }
-        }
-
-        class EnemySquare extends Enemy {
-            constructor(x, y, lvl) {
-                super(x, y, 'square');
-                this.level = Math.max(1, Math.min(8, lvl || EnemySquare.randomLevel()));
-                this.baseHP = CONFIG.squareBaseHP;
-                this.hp = this.level * this.baseHP;
-                this.maxHp = this.hp;
-                this.radius = 15 + (this.level - 1) * 3; 
-                this.speed = 1.5;
-                this.baseColorH = 240; 
-                this.colorRange = 100; 
-            }
-            static randomLevel() {
-                const weights = [30, 25, 20, 10, 5, 4, 3, 3];
-                const total = weights.reduce((a, b) => a + b, 0);
-                let rand = Math.random() * total;
-                let cumulative = 0;
-                for (let i = 0; i < 8; i++) {
-                    cumulative += weights[i];
-                    if (rand <= cumulative) return i + 1;
-                }
-                return 1;
-            }
-            applyGravity() {
-                const G = 100; let netForceX = 0; let netForceY = 0;
-                for (let other of enemies) {
-                    if (other === this || other.type !== 'square' || other.markedForDeletion) continue;
-                    const dx = other.x - this.x; const dy = other.y - this.y;
-                    const distSq = dx * dx + dy * dy; const dist = Math.sqrt(distSq);
-                    if (dist < 10) continue; 
-                    const forceMag = G * (this.hp * other.hp) / distSq; 
-                    netForceX += (dx / dist) * forceMag; netForceY += (dy / dist) * forceMag;
-                }
-                const accelerationX = netForceX / this.hp; const accelerationY = netForceY / this.hp;
-                const maxAccel = 0.5;
-                this.x += Math.max(-maxAccel, Math.min(maxAccel, accelerationX));
-                this.y += Math.max(-maxAccel, Math.min(maxAccel, accelerationY));
-            }
-            update() {
-                this.applyGravity(); 
-
-                if (this.level < 8) { 
-                    for (let other of enemies) {
-                        if (other === this || other.type !== 'square' || other.markedForDeletion || other.level >= 8) continue;
-                        const dist = Math.hypot(this.x - other.x, this.y - other.y);
-                        if (dist < this.radius + other.radius - 5) {
-                            const newLevel = Math.min(8, this.level + other.level);
-                            other.level = newLevel;
-                            other.hp = other.maxHp = newLevel * this.baseHP;
-                            other.radius = 15 + (newLevel - 1) * 3;
-                            this.markedForDeletion = true;
-                            createExplosion(this.x, this.y, '#44f', 3);
-                            break; 
-                        }
-                    }
-                }
-                super.update();
-            }
-            draw() {
-                let pct = this.level / 8;
-                let hue = this.baseColorH + (this.colorRange * pct); 
-                
-                ctx.fillStyle = `hsl(${hue}, 80%, 60%)`;
-                ctx.fillRect(this.x - this.radius, this.y - this.radius, this.radius*2, this.radius*2);
-                
-                ctx.fillStyle = 'white';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.font = `${12 + this.level}px Arial`;
-                ctx.fillText(this.level, this.x, this.y);
-            }
-        }
-        
-        class Boss1 extends Enemy {
-            constructor(x, y) {
-                super(x, y, 'boss1');
-                this.radius = 100;
-                this.speed = 1.0;
-                this.hp = 1000 * level; 
-                this.maxHp = this.hp;
-                this.baseColor = { r: 255, g: 0, b: 0 };
-                this.colorCycle = 0;
-            }
-            absorb(target) {
-                this.hp = Math.min(this.maxHp, this.hp + target.hp);
-                target.markedForDeletion = true;
-                createExplosion(target.x, target.y, '#f0f', 5);
-            }
-            update() {
-                enemies.forEach(e => {
-                    if (e === this || e.type.startsWith('boss')) return;
-                    const dist = Math.hypot(this.x - e.x, this.y - e.y);
-                    if (dist < this.radius + e.radius - 5) {
-                        this.absorb(e);
-                    }
-                });
-                super.update();
-            }
-            draw() {
-                this.colorCycle += 0.5;
-                const r = Math.floor(127 * Math.sin(0.01 * this.colorCycle) + 128);
-                const g = Math.floor(127 * Math.sin(0.01 * this.colorCycle + 2) + 128);
-                const b = Math.floor(127 * Math.sin(0.01 * this.colorCycle + 4) + 128);
-
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
-                ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
-                ctx.shadowBlur = 30; ctx.shadowColor = `rgb(${r}, ${g}, ${b})`;
-                ctx.fill();
-                ctx.shadowBlur = 0;
-            }
-        }
-
-        class Boss2 extends Enemy {
-            constructor(x, y) {
-                super(x, y, 'boss2');
-                this.radius = 50;
-                this.speed = 0.5; 
-                this.hp = Infinity; 
-                this.maxHp = Infinity;
-                this.color = '#00aaff';
-            }
-            takeDamage(amt) { /* 无敌，忽略伤害 */ }
-            update() {
-                const angle = Math.atan2(player.y - this.y, player.x - this.x);
-                this.vx = Math.cos(angle) * this.speed;
-                this.vy = Math.sin(angle) * this.speed;
-                this.x += this.vx;
-                this.y += this.vy;
-                this.draw();
-            }
-            draw() {
-                ctx.save();
-                ctx.translate(this.x, this.y);
-                ctx.rotate(frameCount / 60);
-
-                ctx.strokeStyle = this.color;
-                ctx.lineWidth = 5;
-                ctx.setLineDash([50, 10]);
-
-                ctx.beginPath();
-                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
-                ctx.stroke();
-
-                ctx.setLineDash([]);
-                ctx.beginPath();
-                ctx.arc(0, 0, this.radius * 0.5, 0, Math.PI * 2);
-                ctx.fillStyle = 'rgba(0, 170, 255, 0.5)';
-                ctx.fill();
-
-                ctx.restore();
-            }
-        }
-        
-        function spawnBoss() {
-            let bx, by, side = Math.floor(Math.random() * 4);
-            let buffer = 150; 
-            
-            if (side === 0) { bx = randomRange(0, canvas.width); by = 0 - buffer; } 
-            else if (side === 1) { bx = canvas.width + buffer; by = randomRange(0, canvas.height); } 
-            else if (side === 2) { bx = randomRange(0, canvas.width); by = canvas.height + buffer; } 
-            else { bx = 0 - buffer; by = randomRange(0, canvas.height); } 
-            
-            if (bossType === 1) {
-                enemies.push(new Boss1(bx, by));
-            } else if (bossType === 2) {
-                enemies.push(new Boss2(bx, by));
-            }
-        }
-
-
-        function resetLevel() {
-            mapBounds = { x: 0, y: 0, w: canvas.width, h: canvas.height };
-            enemies = [];
-            
-            specialElements = [];
-            inactivityTimer = 0; 
-
-            projectiles = [];
-            particles = [];
-            moneyDrops = []; // 保证金钱掉落物清空
-            
-            player = new Player(); 
-            levelTimer = 0;
-            
-            if (isBossLevel(level)) {
-                bossType = Math.random() < 0.5 ? 1 : 2; 
-                currentLevelDuration = bossType === 2 ? CONFIG.boss2Duration : CONFIG.boss1Duration; 
-                spawnBoss();
-            } else {
-                bossType = 0;
-                currentLevelDuration = CONFIG.normalDuration;
-            }
-            
-            updateHud();
-            calculateSpawnRate(); 
-        }
-
-        function init() {
-            console.log("初始化游戏 (init) 被调用。"); 
-            
-            score = 0;
-            money = 0; 
-            level = 1;
-
-            initializePlayerStats(); 
-            
-            if (gameOverScreen) gameOverScreen.classList.add('hidden'); 
-            
-            resetLevel(); 
-            
-            if (startScreen) startScreen.classList.add('hidden');
-            
-            gameState = 'PLAYING';
-            animate();
-        }
-        
-        function generateRewardOptions() {
-            rewardMoneyEl.innerText = money;
-            nextLevelDisplayEl.innerText = level + 1;
-            const content = document.getElementById('level-reward-content');
-            
-            const options = [
-                { type: 'DAMAGE', label: `💥 攻击力 Lvl.${upgradeLevels.DAMAGE + 1} (+${Math.round(UPGRADE_FACTORS.DAMAGE * 100) - 100}%)`, cost: currentUpgradeCosts.DAMAGE },
-                { type: 'RANGE', label: `🔭 射程 Lvl.${upgradeLevels.RANGE + 1} (+${UPGRADE_FACTORS.RANGE} 像素)`, cost: currentUpgradeCosts.RANGE },
-                { type: 'FIRE_RATE', label: `⏱️ 射速 Lvl.${upgradeLevels.FIRE_RATE + 1} (CD x${UPGRADE_FACTORS.FIRE_RATE_MODIFIER.toFixed(2)})`, cost: currentUpgradeCosts.FIRE_RATE },
-            ];
-
-            content.innerHTML = options.map(opt => {
-                const canAfford = money >= opt.cost;
-                const costDisplay = canAfford ? `消耗 $${opt.cost}` : `资金不足 $${opt.cost}`;
-                const disabledClass = canAfford ? '' : 'disabled';
-                return `<button id="upgrade-${opt.type}" class="${disabledClass}" data-type="${opt.type}" data-cost="${opt.cost}">${opt.label} - ${costDisplay}</button>`;
-            }).join('');
-            
-            options.forEach(opt => {
-                const btn = document.getElementById(`upgrade-${opt.type}`);
-                if (btn) {
-                    btn.onclick = () => {
-                        applyUpgrade(opt.type);
-                    };
-                }
-            });
-
-            document.getElementById('skip-btn').onclick = goToNextLevel;
-        }
-
-        function goToNextLevel() {
-            rewardScreen.classList.add('hidden');
-            level++; 
-            resetLevel(); 
-            gameState = 'PLAYING';
-            animate();
-        }
-
-
-        function levelComplete() {
-            gameState = 'LEVEL_COMPLETE';
-            cancelAnimationFrame(animationId);
-            
-            // 【修改点 2】: 关卡通关后，结算剩余金钱
-            collectRemainingMoney();
-
-            rewardLevelEl.innerText = level;
-            generateRewardOptions(); 
-            rewardScreen.classList.remove('hidden');
-        }
-
-        // 【新增函数】: 结算剩余金钱
-        function collectRemainingMoney() {
-            let collectedValue = 0;
-            moneyDrops.forEach(drop => {
-                collectedValue += drop.value;
-            });
-            
-            // 乘以 0.5 倍
-            const finalMoneyGain = Math.floor(collectedValue * 0.5);
-            money += finalMoneyGain;
-            
-            // 清空掉落物 (已结算)
-            moneyDrops = [];
-            
-            // 视觉反馈 (可选，可以简单地在控制台输出或闪烁 HUD)
-            console.log(`关卡结算：收集到 ${collectedValue}，实际获得 ${finalMoneyGain} (0.5倍)`);
-            updateHud();
-        }
-
-        function spawnEnemy() {
-            if (frameCount % spawnFrames === 0) {
-                let r = Math.random() * Object.values(CONFIG.enemyWeights).reduce((a, b) => a + b, 0);
-                let type;
-                let cumulativeWeight = 0;
-                for (const t in CONFIG.enemyWeights) {
-                    cumulativeWeight += CONFIG.enemyWeights[t];
-                    if (r <= cumulativeWeight) {
-                        type = t;
-                        break;
-                    }
-                }
-
-                let ex, ey, side = Math.floor(Math.random() * 4);
-                let buffer = 80;
-                
-                if (side === 0) { ex = randomRange(0, canvas.width); ey = 0 - buffer; } 
-                else if (side === 1) { ex = canvas.width + buffer; ey = randomRange(0, canvas.height); } 
-                else if (side === 2) { ex = randomRange(0, canvas.width); ey = canvas.height + buffer; } 
-                else { ex = 0 - buffer; ey = randomRange(0, canvas.height); } 
-
-                if (type === 'triangle') enemies.push(new EnemyTriangle(ex, ey));
-                else if (type === 'square') enemies.push(new EnemySquare(ex, ey));
-                else if (type === 'tank') enemies.push(new EnemyTank(ex, ey));
-            }
-
-            if (frameCount % 600 === 0 && specialElements.length < 1 && Math.random() < 0.8) {
-                let sx = randomRange(mapBounds.x + 50, mapBounds.x + mapBounds.w - 50);
-                let sy = randomRange(mapBounds.y + 50, mapBounds.y + mapBounds.h - 50);
-                specialElements.push(new SpecialStar(sx, sy));
-            }
-        }
-
-        function shrinkMap() {
-            const shrink = CONFIG.baseMapShrink;
-            let targetW = mapBounds.w - shrink * 2;
-            let targetH = mapBounds.h - shrink * 2;
-
-            if (targetW < 200 || targetH < 200) {
-                endGame();
-                return;
-            }
-
-            mapBounds.x += shrink;
-            mapBounds.y += shrink;
-            mapBounds.w = targetW;
-            mapBounds.h = targetH;
-            
-            document.body.style.transform = `translate(${Math.random()*10-5}px, ${Math.random()*10-5}px)`;
-            setTimeout(() => document.body.style.transform = 'none', 50);
-
-            player.x = Math.max(mapBounds.x + player.radius, Math.min(mapBounds.x + mapBounds.w - player.radius, player.x));
-            player.y = Math.max(mapBounds.y + player.radius, Math.min(mapBounds.y + mapBounds.h - player.radius, player.y));
-        }
-
-        function updateHud() {
+class Enemy {
+    constructor(x, y, type) {
+        this.x = x; this.y = y;
+        this.vx = 0; this.vy = 0;
+        this.markedForDeletion = false;
+        this.radius = 10; this.hp = 10; this.maxHp = 10;
+        this.speed = 1; this.color = '#fff'; this.type = type || 'base';
+    }
+    takeDamage(amt) {
+        this.hp -= amt;
+        if (this.hp <= 0) {
+            this.markedForDeletion = true;
+            score += this.maxHp * 2;
             scoreEl.innerText = score;
-            moneyEl.innerText = money; 
-            levelEl.innerText = level;
-            
-            let timeValue;
-            if (bossType === 1) {
-                timeValue = 'KILL'; 
-            } else if (bossType === 2) {
-                timeValue = Math.max(0, CONFIG.boss2Duration - levelTimer);
-            } else {
-                timeValue = Math.max(0, CONFIG.normalDuration - levelTimer);
-            }
 
-            timeEl.innerText = typeof timeValue === 'number' ? (timeValue < 10 ? `0${timeValue}` : timeValue) : timeValue;
-            timeEl.style.color = '#00ffff'; 
-            
-            let pct = (bossType === 0 || bossType === 2) ? (levelTimer / currentLevelDuration) * 100 : 0;
-            levelBar.style.width = `${pct}%`; 
+            moneyDrops.push(new MoneyDrop(this.x, this.y, Math.round(this.maxHp / 2)));
+
+            createExplosion(this.x, this.y, this.color, 8);
+
+            if (this.type === 'boss1') levelComplete();
         }
-        
-        function animate() {
-            if (gameState !== 'PLAYING') return;
-            animationId = requestAnimationFrame(animate);
-            frameCount++;
+    }
+    drawHealthBar() {
+        if (this.hp < this.maxHp && this.type !== 'boss2') {
+            const pct = this.hp / this.maxHp;
+            const barWidth = Math.min(this.radius * 3, 50);
+            ctx.fillStyle = 'red';
+            ctx.fillRect(this.x - barWidth/2, this.y - this.radius - 8, barWidth, 4);
+            ctx.fillStyle = '#0f0';
+            ctx.fillRect(this.x - barWidth/2, this.y - this.radius - 8, barWidth * pct, 4);
+        }
+    }
+    update() {
+        if(this.type === 'boss2') return this.draw();
+        const angle = Math.atan2(player.y - this.y, player.x - this.x);
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.draw();
+        this.drawHealthBar();
+    }
+    draw() { /* 子类实现 */ }
+}
 
-            ctx.fillStyle = '#050505';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+class EnemyTriangle extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'triangle');
+        this.radius = 12; this.speed = 3.5;
+        this.hp = 20; this.maxHp = 20;
+        this.color = '#ffd700'; this.angle = 0;
+    }
+    update() { this.angle += 0.1; super.update(); }
+    draw() {
+        ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
+        ctx.beginPath();
+        ctx.moveTo(12, 0); ctx.lineTo(-9, 9); ctx.lineTo(-9, -9);
+        ctx.fillStyle = this.color; ctx.fill();
+        ctx.restore();
+    }
+}
 
-            ctx.strokeStyle = '#f00';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([10, 5]);
-            ctx.strokeRect(mapBounds.x, mapBounds.y, mapBounds.w, mapBounds.h);
-            ctx.setLineDash([]);
+class EnemyTank extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'tank');
+        this.radius = 35; this.speed = 0.8;
+        this.hp = 150; this.maxHp = 150;
+        this.color = '#ff3333';
+    }
+    draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 10; ctx.shadowColor = 'red';
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    }
+}
 
-            if (frameCount % 60 === 0) {
-                levelTimer++;
-                
-                if (bossType === 2) { 
-                    if (levelTimer >= CONFIG.boss2Duration) {
-                        levelComplete();
-                    }
-                } else if (bossType === 0) { 
-                    if (levelTimer >= CONFIG.normalDuration) {
-                        levelComplete();
-                    }
+class EnemySquare extends Enemy {
+    constructor(x, y, lvl) {
+        super(x, y, 'square');
+        this.level = Math.max(1, Math.min(8, lvl || EnemySquare.randomLevel()));
+        this.baseHP = CONFIG.squareBaseHP;
+        this.hp = this.level * this.baseHP;
+        this.maxHp = this.hp;
+        this.radius = 15 + (this.level - 1) * 3;
+        this.speed = 1.5;
+        this.baseColorH = 240;
+        this.colorRange = 100;
+    }
+    static randomLevel() {
+        const weights = [30, 25, 20, 10, 5, 4, 3, 3];
+        const total = weights.reduce((a, b) => a + b, 0);
+        let rand = Math.random() * total;
+        let cumulative = 0;
+        for (let i = 0; i < 8; i++) {
+            cumulative += weights[i];
+            if (rand <= cumulative) return i + 1;
+        }
+        return 1;
+    }
+    applyGravity() {
+        const G = 100; let netForceX = 0; let netForceY = 0;
+        for (let other of enemies) {
+            if (other === this || other.type !== 'square' || other.markedForDeletion) continue;
+            const dx = other.x - this.x; const dy = other.y - this.y;
+            const distSq = dx * dx + dy * dy; const dist = Math.sqrt(distSq);
+            if (dist < 10) continue;
+            const forceMag = G * (this.hp * other.hp) / distSq;
+            netForceX += (dx / dist) * forceMag; netForceY += (dy / dist) * forceMag;
+        }
+        const accelerationX = netForceX / this.hp; const accelerationY = netForceY / this.hp;
+        const maxAccel = 0.5;
+        this.x += Math.max(-maxAccel, Math.min(maxAccel, accelerationX));
+        this.y += Math.max(-maxAccel, Math.min(maxAccel, accelerationY));
+    }
+    update() {
+        this.applyGravity();
+
+        if (this.level < 8) {
+            for (let other of enemies) {
+                if (other === this || other.type !== 'square' || other.markedForDeletion || other.level >= 8) continue;
+                const dist = Math.hypot(this.x - other.x, this.y - other.y);
+                if (dist < this.radius + other.radius - 5) {
+                    const newLevel = Math.min(8, this.level + other.level);
+                    other.level = newLevel;
+                    other.hp = other.maxHp = newLevel * this.baseHP;
+                    other.radius = 15 + (newLevel - 1) * 3;
+                    this.markedForDeletion = true;
+                    createExplosion(this.x, this.y, '#44f', 3);
+                    break;
                 }
             }
-            
-            const playerSpeedSq = player.velocity.x ** 2 + player.velocity.y ** 2;
-            if (playerSpeedSq < 0.1 && (keys.w || keys.a || keys.s || keys.d) === false) { 
-                inactivityTimer++; 
-            } else {
-                inactivityTimer = 0; 
+        }
+        super.update();
+    }
+    draw() {
+        let pct = this.level / 8;
+        let hue = this.baseColorH + (this.colorRange * pct);
+
+        ctx.fillStyle = `hsl(${hue}, 80%, 60%)`;
+        ctx.fillRect(this.x - this.radius, this.y - this.radius, this.radius*2, this.radius*2);
+
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = `${12 + this.level}px Arial`;
+        ctx.fillText(this.level, this.x, this.y);
+    }
+}
+
+class Boss1 extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'boss1');
+        this.radius = 100;
+        this.speed = 1.0;
+        this.hp = 1000 * level;
+        this.maxHp = this.hp;
+        this.baseColor = { r: 255, g: 0, b: 0 };
+        this.colorCycle = 0;
+    }
+    absorb(target) {
+        this.hp = Math.min(this.maxHp, this.hp + target.hp);
+        target.markedForDeletion = true;
+        createExplosion(target.x, target.y, '#f0f', 5);
+    }
+    update() {
+        enemies.forEach(e => {
+            if (e === this || e.type.startsWith('boss')) return;
+            const dist = Math.hypot(this.x - e.x, this.y - e.y);
+            if (dist < this.radius + e.radius - 5) {
+                this.absorb(e);
             }
-            
-            updateHud();
+        });
+        super.update();
+    }
+    draw() {
+        this.colorCycle += 0.5;
+        const r = Math.floor(127 * Math.sin(0.01 * this.colorCycle) + 128);
+        const g = Math.floor(127 * Math.sin(0.01 * this.colorCycle + 2) + 128);
+        const b = Math.floor(127 * Math.sin(0.01 * this.colorCycle + 4) + 128);
 
-            player.update();
-            spawnEnemy();
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.shadowBlur = 30; ctx.shadowColor = `rgb(${r}, ${g}, ${b})`;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    }
+}
 
-            // 处理特殊元素 (五角星)
-            specialElements = specialElements.filter(e => {
-                e.update();
-                const distPlayer = Math.hypot(player.x - e.x, player.y - e.y);
-                if (distPlayer < player.radius + e.radius) {
-                    score += 500;
-                    createExplosion(e.x, e.y, '#0f0', 10);
-                    inactivityTimer = 0; 
-                    return false;
-                }
-                return !e.markedForDeletion;
-            });
+class Boss2 extends Enemy {
+    constructor(x, y) {
+        super(x, y, 'boss2');
+        this.radius = 50;
+        this.speed = 0.5;
+        this.hp = Infinity;
+        this.maxHp = Infinity;
+        this.color = '#00aaff';
+    }
+    takeDamage(amt) { /* 无敌，忽略伤害 */ }
+    update() {
+        const angle = Math.atan2(player.y - this.y, player.x - this.x);
+        this.vx = Math.cos(angle) * this.speed;
+        this.vy = Math.sin(angle) * this.speed;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.draw();
+    }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(frameCount / 60);
 
-            // 金钱自动吸取
-            moneyDrops = moneyDrops.filter(drop => {
-                drop.update();
-                const dist = Math.hypot(player.x - drop.x, player.y - drop.y);
-                
-                const collectionRadius = playerStats.range / 3; 
-                
-                // 自动拉取/磁力
-                if (dist < collectionRadius) {
-                    const angle = Math.atan2(player.y - drop.y, player.x - drop.x);
-                    const pullSpeed = Math.max(5, (collectionRadius - dist) / 10); 
-                    drop.x += Math.cos(angle) * pullSpeed;
-                    drop.y += Math.sin(angle) * pullSpeed;
-                }
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 5;
+        ctx.setLineDash([50, 10]);
 
-                // 收集
-                if (dist < player.radius + drop.radius + 5) {
-                    money += drop.value;
-                    return false; 
-                }
-                
-                return !drop.markedForDeletion;
-            });
-            
-            particles = particles.filter(p => {
-                p.update();
-                return p.alpha > 0;
-            });
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+        ctx.stroke();
 
-            projectiles = projectiles.filter(p => {
-                p.update();
-                
-                enemies.forEach(enemy => {
-                    const dist = Math.hypot(p.x - enemy.x, p.y - enemy.y);
-                    if (dist < enemy.radius + p.radius && !enemy.markedForDeletion) {
-                        if (enemy.type === 'boss2') {
-                            p.markedForDeletion = true;
-                            createExplosion(p.x, p.y, enemy.color, 3); 
-                            return; 
-                        }
-                        
-                        enemy.takeDamage(p.damage); 
-                        p.markedForDeletion = true; 
-                    }
-                });
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius * 0.5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0, 170, 255, 0.5)';
+        ctx.fill();
 
-                return !p.markedForDeletion;
-            });
+        ctx.restore();
+    }
+}
 
-            enemies.forEach((enemy) => {
-                enemy.update();
-                const distPlayer = Math.hypot(player.x - enemy.x, player.y - enemy.y);
-                if (distPlayer < player.radius + enemy.radius) {
-                    endGame();
-                }
-            });
+function spawnBoss() {
+    let bx, by, side = Math.floor(Math.random() * 4);
+    let buffer = 150;
 
-            enemies = enemies.filter(e => !e.markedForDeletion);
+    if (side === 0) { bx = randomRange(0, canvas.width); by = 0 - buffer; }
+    else if (side === 1) { bx = canvas.width + buffer; by = randomRange(0, canvas.height); }
+    else if (side === 2) { bx = randomRange(0, canvas.width); by = canvas.height + buffer; }
+    else { bx = 0 - buffer; by = randomRange(0, canvas.height); }
+
+    if (bossType === 1) {
+        enemies.push(new Boss1(bx, by));
+    } else if (bossType === 2) {
+        enemies.push(new Boss2(bx, by));
+    }
+}
+
+
+function resetLevel() {
+    mapBounds = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+    enemies = [];
+
+    specialElements = [];
+    inactivityTimer = 0;
+
+    projectiles = [];
+    particles = [];
+    moneyDrops = []; // 保证金钱掉落物清空
+
+    player = new Player();
+    levelTimer = 0;
+
+    if (isBossLevel(level)) {
+        bossType = Math.random() < 0.5 ? 1 : 2;
+        currentLevelDuration = bossType === 2 ? CONFIG.boss2Duration : CONFIG.boss1Duration;
+        spawnBoss();
+    } else {
+        bossType = 0;
+        currentLevelDuration = CONFIG.normalDuration;
+    }
+
+    updateHud();
+    calculateSpawnRate();
+}
+
+function init() {
+    console.log("初始化游戏 (init) 被调用。");
+
+    score = 0;
+    money = 0;
+    level = 1;
+
+    initializePlayerStats();
+
+    if (gameOverScreen) gameOverScreen.classList.add('hidden');
+
+    resetLevel();
+
+    if (startScreen) startScreen.classList.add('hidden');
+
+    gameState = 'PLAYING';
+    animate();
+}
+
+function generateRewardOptions() {
+    rewardMoneyEl.innerText = money;
+    nextLevelDisplayEl.innerText = level + 1;
+    const content = document.getElementById('level-reward-content');
+
+    const options = [
+        { type: 'DAMAGE', label: `💥 攻击力 Lvl.${upgradeLevels.DAMAGE + 1} (+${Math.round(UPGRADE_FACTORS.DAMAGE * 100) - 100}%)`, cost: currentUpgradeCosts.DAMAGE },
+        { type: 'RANGE', label: `🔭 射程 Lvl.${upgradeLevels.RANGE + 1} (+${UPGRADE_FACTORS.RANGE} 像素)`, cost: currentUpgradeCosts.RANGE },
+        { type: 'FIRE_RATE', label: `⏱️ 射速 Lvl.${upgradeLevels.FIRE_RATE + 1} (CD x${UPGRADE_FACTORS.FIRE_RATE_MODIFIER.toFixed(2)})`, cost: currentUpgradeCosts.FIRE_RATE },
+    ];
+
+    content.innerHTML = options.map(opt => {
+        const canAfford = money >= opt.cost;
+        const costDisplay = canAfford ? `消耗 $${opt.cost}` : `资金不足 $${opt.cost}`;
+        const disabledClass = canAfford ? '' : 'disabled';
+        return `<button id="upgrade-${opt.type}" class="${disabledClass}" data-type="${opt.type}" data-cost="${opt.cost}">${opt.label} - ${costDisplay}</button>`;
+    }).join('');
+
+    options.forEach(opt => {
+        const btn = document.getElementById(`upgrade-${opt.type}`);
+        if (btn) {
+            btn.onclick = () => {
+                applyUpgrade(opt.type);
+            };
+        }
+    });
+
+    document.getElementById('skip-btn').onclick = goToNextLevel;
+}
+
+function goToNextLevel() {
+    rewardScreen.classList.add('hidden');
+    level++;
+    resetLevel();
+    gameState = 'PLAYING';
+    animate();
+}
+
+
+function levelComplete() {
+    gameState = 'LEVEL_COMPLETE';
+    cancelAnimationFrame(animationId);
+
+    // 【修改点 2】: 关卡通关后，结算剩余金钱
+    collectRemainingMoney();
+
+    rewardLevelEl.innerText = level;
+    generateRewardOptions();
+    rewardScreen.classList.remove('hidden');
+}
+
+// 【新增函数】: 结算剩余金钱
+function collectRemainingMoney() {
+    let collectedValue = 0;
+    moneyDrops.forEach(drop => {
+        collectedValue += drop.value;
+    });
+
+    // 乘以 0.5 倍
+    const finalMoneyGain = Math.floor(collectedValue * 0.5);
+    money += finalMoneyGain;
+
+    // 清空掉落物 (已结算)
+    moneyDrops = [];
+
+    // 视觉反馈 (可选，可以简单地在控制台输出或闪烁 HUD)
+    console.log(`关卡结算：收集到 ${collectedValue}，实际获得 ${finalMoneyGain} (0.5倍)`);
+    updateHud();
+}
+
+function spawnEnemy() {
+    if (frameCount % spawnFrames === 0) {
+        let r = Math.random() * Object.values(CONFIG.enemyWeights).reduce((a, b) => a + b, 0);
+        let type;
+        let cumulativeWeight = 0;
+        for (const t in CONFIG.enemyWeights) {
+            cumulativeWeight += CONFIG.enemyWeights[t];
+            if (r <= cumulativeWeight) {
+                type = t;
+                break;
+            }
         }
 
-        function endGame() {
-            gameState = 'GAMEOVER';
-            cancelAnimationFrame(animationId);
-            document.getElementById('final-level').innerText = level;
-            document.getElementById('final-score').innerText = score;
-            gameOverScreen.classList.remove('hidden');
-        }
+        let ex, ey, side = Math.floor(Math.random() * 4);
+        let buffer = 80;
 
-        // --- 键盘输入 ---
-        const keys = { w:false, a:false, s:false, d:false };
-        window.addEventListener('keydown', e => {
-            keys[e.key.toLowerCase()] = true;
-            
-            if (e.key.toLowerCase() === 'k' && gameState === 'PLAYING') {
+        if (side === 0) { ex = randomRange(0, canvas.width); ey = 0 - buffer; }
+        else if (side === 1) { ex = canvas.width + buffer; ey = randomRange(0, canvas.height); }
+        else if (side === 2) { ex = randomRange(0, canvas.width); ey = canvas.height + buffer; }
+        else { ex = 0 - buffer; ey = randomRange(0, canvas.height); }
+
+        if (type === 'triangle') enemies.push(new EnemyTriangle(ex, ey));
+        else if (type === 'square') enemies.push(new EnemySquare(ex, ey));
+        else if (type === 'tank') enemies.push(new EnemyTank(ex, ey));
+    }
+
+    if (frameCount % 600 === 0 && specialElements.length < 1 && Math.random() < 0.8) {
+        let sx = randomRange(mapBounds.x + 50, mapBounds.x + mapBounds.w - 50);
+        let sy = randomRange(mapBounds.y + 50, mapBounds.y + mapBounds.h - 50);
+        specialElements.push(new SpecialStar(sx, sy));
+    }
+}
+
+function shrinkMap() {
+    const shrink = CONFIG.baseMapShrink;
+    let targetW = mapBounds.w - shrink * 2;
+    let targetH = mapBounds.h - shrink * 2;
+
+    if (targetW < 200 || targetH < 200) {
+        endGame();
+        return;
+    }
+
+    mapBounds.x += shrink;
+    mapBounds.y += shrink;
+    mapBounds.w = targetW;
+    mapBounds.h = targetH;
+
+    document.body.style.transform = `translate(${Math.random()*10-5}px, ${Math.random()*10-5}px)`;
+    setTimeout(() => document.body.style.transform = 'none', 50);
+
+    player.x = Math.max(mapBounds.x + player.radius, Math.min(mapBounds.x + mapBounds.w - player.radius, player.x));
+    player.y = Math.max(mapBounds.y + player.radius, Math.min(mapBounds.y + mapBounds.h - player.radius, player.y));
+}
+
+function updateHud() {
+    scoreEl.innerText = score;
+    moneyEl.innerText = money;
+    levelEl.innerText = level;
+
+    let timeValue;
+    if (bossType === 1) {
+        timeValue = 'KILL';
+    } else if (bossType === 2) {
+        timeValue = Math.max(0, CONFIG.boss2Duration - levelTimer);
+    } else {
+        timeValue = Math.max(0, CONFIG.normalDuration - levelTimer);
+    }
+
+    timeEl.innerText = typeof timeValue === 'number' ? (timeValue < 10 ? `0${timeValue}` : timeValue) : timeValue;
+    timeEl.style.color = '#00ffff';
+
+    let pct = (bossType === 0 || bossType === 2) ? (levelTimer / currentLevelDuration) * 100 : 0;
+    levelBar.style.width = `${pct}%`;
+}
+
+function animate() {
+    if (gameState !== 'PLAYING') return;
+    animationId = requestAnimationFrame(animate);
+    frameCount++;
+
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#f00';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([10, 5]);
+    ctx.strokeRect(mapBounds.x, mapBounds.y, mapBounds.w, mapBounds.h);
+    ctx.setLineDash([]);
+
+    if (frameCount % 60 === 0) {
+        levelTimer++;
+
+        if (bossType === 2) {
+            if (levelTimer >= CONFIG.boss2Duration) {
                 levelComplete();
             }
-        });
+        } else if (bossType === 0) {
+            if (levelTimer >= CONFIG.normalDuration) {
+                levelComplete();
+            }
+        }
+    }
 
-        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+    // --- 【修改点 4】: 键盘输入整合到 animate 循环中 (施加力) ---
+    if (!touchTarget) { // 触屏优先，如果没有触屏输入才检测键盘
+        if (keys.w) player.velocity.y -= player.speed;
+        if (keys.s) player.velocity.y += player.speed;
+        if (keys.a) player.velocity.x -= player.speed;
+        if (keys.d) player.velocity.x += player.speed;
 
-        setInterval(() => {
-            if (gameState !== 'PLAYING') return;
-            if (keys.w) player.velocity.y -= 1.2;
-            if (keys.s) player.velocity.y += 1.2;
-            if (keys.a) player.velocity.x -= 1.2;
-            if (keys.d) player.velocity.x += 1.2;
-        }, 16);
+        // 限制键盘最大速度
+        const currentSpeed = Math.hypot(player.velocity.x, player.velocity.y);
+        if (currentSpeed > MAX_TOUCH_SPEED) {
+             player.velocity.x = (player.velocity.x / currentSpeed) * MAX_TOUCH_SPEED;
+             player.velocity.y = (player.velocity.y / currentSpeed) * MAX_TOUCH_SPEED;
+        }
+    }
 
-        window.addEventListener('resize', () => {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            if (gameState !== 'PLAYING') {
-                 mapBounds = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+
+    const playerSpeedSq = player.velocity.x ** 2 + player.velocity.y ** 2;
+    if (playerSpeedSq < 0.1 && (keys.w || keys.a || keys.s || keys.d) === false && touchTarget === null) {
+        inactivityTimer++;
+    } else {
+        inactivityTimer = 0;
+    }
+
+    updateHud();
+
+    player.update();
+    spawnEnemy();
+
+    // 处理特殊元素 (五角星)
+    specialElements = specialElements.filter(e => {
+        e.update();
+        const distPlayer = Math.hypot(player.x - e.x, player.y - e.y);
+        if (distPlayer < player.radius + e.radius) {
+            score += 500;
+            createExplosion(e.x, e.y, '#0f0', 10);
+            inactivityTimer = 0;
+            return false;
+        }
+        return !e.markedForDeletion;
+    });
+
+    // 金钱自动吸取
+    moneyDrops = moneyDrops.filter(drop => {
+        drop.update();
+        const dist = Math.hypot(player.x - drop.x, player.y - drop.y);
+
+        const collectionRadius = playerStats.range / 3;
+
+        // 自动拉取/磁力
+        if (dist < collectionRadius) {
+            const angle = Math.atan2(player.y - drop.y, player.x - drop.x);
+            const pullSpeed = Math.max(5, (collectionRadius - dist) / 10);
+            drop.x += Math.cos(angle) * pullSpeed;
+            drop.y += Math.sin(angle) * pullSpeed;
+        }
+
+        // 收集
+        if (dist < player.radius + drop.radius + 5) {
+            money += drop.value;
+            return false;
+        }
+
+        return !drop.markedForDeletion;
+    });
+
+    particles = particles.filter(p => {
+        p.update();
+        return p.alpha > 0;
+    });
+
+    projectiles = projectiles.filter(p => {
+        p.update();
+
+        enemies.forEach(enemy => {
+            const dist = Math.hypot(p.x - enemy.x, p.y - enemy.y);
+            if (dist < enemy.radius + p.radius && !enemy.markedForDeletion) {
+                if (enemy.type === 'boss2') {
+                    p.markedForDeletion = true;
+                    createExplosion(p.x, p.y, enemy.color, 3);
+                    return;
+                }
+
+                enemy.takeDamage(p.damage);
+                p.markedForDeletion = true;
             }
         });
-        
-        // --- UI 事件绑定 (确保在 DOM 加载后执行) ---
-        window.addEventListener('load', () => {
-             document.getElementById('start-btn').addEventListener('click', init); 
-             document.getElementById('restart-btn').addEventListener('click', init);
-        });
 
+        return !p.markedForDeletion;
+    });
+
+    enemies.forEach((enemy) => {
+        enemy.update();
+        const distPlayer = Math.hypot(player.x - enemy.x, enemy.y - player.y);
+        if (distPlayer < player.radius + enemy.radius) {
+            endGame();
+        }
+    });
+
+    enemies = enemies.filter(e => !e.markedForDeletion);
+}
+
+function endGame() {
+    gameState = 'GAMEOVER';
+    cancelAnimationFrame(animationId);
+    document.getElementById('final-level').innerText = level;
+    document.getElementById('final-score').innerText = score;
+    gameOverScreen.classList.remove('hidden');
+}
+
+// --- 键盘输入 ---
+const keys = { w:false, a:false, s:false, d:false };
+window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+
+    if (e.key.toLowerCase() === 'k' && gameState === 'PLAYING') {
+        levelComplete();
+    }
+});
+
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+// --- 【修改点 5】: 移除原始的 setInterval 速度叠加逻辑 ---
+// 原始代码:
+// setInterval(() => {
+//     if (gameState !== 'PLAYING') return;
+//     if (keys.w) player.velocity.y -= 1.2;
+//     if (keys.s) player.velocity.y += 1.2;
+//     if (keys.a) player.velocity.x -= 1.2;
+//     if (keys.d) player.velocity.x += 1.2;
+// }, 16);
+
+// --- 【新增】: 触屏事件监听器 ---
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault(); // 阻止默认的缩放/滚动行为
+    if (e.touches.length > 0) {
+        touchTarget = {
+            x: e.touches[0].clientX,
+            y: e.touches[0].clientY
+        };
+    }
+}, { passive: false }); // 使用非被动监听器以允许preventDefault
+
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (e.touches.length > 0) {
+        touchTarget = {
+            x: e.touches[0].clientX,
+            y: e.touches[0].clientY
+        };
+    }
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+    // 检查是否所有触摸都已结束，如果结束则清除目标
+    if (e.touches.length === 0) {
+        touchTarget = null;
+    }
+});
+// --- 触屏事件监听器结束 ---
+
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if (gameState !== 'PLAYING') {
+         mapBounds = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+    }
+});
+
+// --- UI 事件绑定 (确保在 DOM 加载后执行) ---
+window.addEventListener('load', () => {
+     document.getElementById('start-btn').addEventListener('click', init);
+     document.getElementById('restart-btn').addEventListener('click', init);
+});
     </script>
 </body>
 </html>
